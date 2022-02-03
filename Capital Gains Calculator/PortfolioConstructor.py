@@ -13,7 +13,8 @@ class Portfolio:
             capacity: The maximum amount of capital the strategy can or is allowed to operate at
     """
 
-    def __init__(self, cagr, std, starting_capital, annual_withdrawals, capacity=np.inf):
+    def __init__(self, back_test_years, cagr, std, starting_capital, annual_withdrawals, capacity=np.inf):
+        self.back_test_years = float(1)
         self.CGR = float(cagr)
         self.StandardDeviation = float(std)
         self.InitialInvestment = float(starting_capital)
@@ -43,7 +44,7 @@ class Portfolio:
         frequency = float(frequency_map[compound_frequency])
         epochs = frequency * years
         gains = 0
-        self.CGR, self.StandardDeviation = self.derive_growth_rate(years=7.63,
+        self.CGR, self.StandardDeviation = self.derive_growth_rate(years=self.back_test_years,
                                                                    cagr=self.CGR,
                                                                    standard_deviation=self.StandardDeviation,
                                                                    frequency=frequency)

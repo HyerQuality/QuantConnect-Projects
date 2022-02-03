@@ -4,14 +4,16 @@ from PortfolioConstructor import Portfolio
 
 
 def main():
-    port_a = Portfolio(cagr=3.68632,
+    port_a = Portfolio(back_test_years=8,
+                       cagr=3.68632,
                        std=0.657,
                        starting_capital=50000,
                        annual_withdrawals=0,
                        capacity=3500000
                        )
 
-    port_b = Portfolio(cagr=2.47,
+    port_b = Portfolio(back_test_years=8,
+                       cagr=2.47,
                        std=0.57,
                        starting_capital=97500,
                        annual_withdrawals=0,
