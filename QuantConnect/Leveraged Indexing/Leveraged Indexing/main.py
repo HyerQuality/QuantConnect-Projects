@@ -16,13 +16,14 @@ from System import *
 from QuantConnect import *
 from QuantConnect import Resolution, Extensions
 from QuantConnect.Data.UniverseSelection import *
-from QuantConnect.Data.Custom.CBOE import *
+# from QuantConnect.Data.Custom.CBOE import *
 from QuantConnect.Algorithm.Framework.Selection import *
 
 ##-------------------Alpha Files and Objects--------------------------------------------------##
 
 from Global import VixHandler
 from Global import Global
+from Global import DefaultValues
 
 import LevSpy
 import LevQ
@@ -35,11 +36,12 @@ from SourceModelPortfolioConstruction import SourceModelPortfolioConstructionMod
 ##-------------------Execution Files---------------------------------------------##
 
 from ImmediateExecution import ImmediateExecutionModel
+from LimitOrderExecutionModel import LimitOrderExecutionModel
 
 ##-------------------Risk Management Files----------------------------------------------------##
 
-from MaximumDrawdownRiskManagement import ManageDrawdownRisk
-from TrailingStopRiskManagement import TrailingStop
+from RiskManagement import ManageDrawdownRisk, TrailingStop
+from ProfitCapture import ProfitCapture
 
 ##-------------------Global variables---------------------------------------------------------##
 
@@ -49,13 +51,19 @@ OneDay = timedelta(days=1)
 StatPeriod = timedelta(days=365)
 
 
+class InteractiveBrokersBrokerageModelWithShortable(InteractiveBrokersBrokerageModel):
+    def __init__(self):
+        super().__init__()
+        self.ShortableProvider = AtreyuShortableProvider(SecurityType.Equity, Market.USA)
+
+
 class AdvancedIndexing(QCAlgorithm):
 
     ##-------------------Initialize variables, lists, asset subscriptions, etc--------------------##
 
     def Initialize(self):
         # Set Start Date so that backtest has 7+ years of data
-        self.SetStartDate(2014, 1, 1)
+        self.SetStartDate(2021, 10, 1)
         # self.SetStartDate(self.Time.today() - timedelta(days=365*7))
         #    self.SetEndDate(2020,1,1)
 
@@ -67,12 +75,16 @@ class AdvancedIndexing(QCAlgorithm):
 
         # Variables
         self.Zero = int(0)
+        self.InitialPortfolioValue = self.Portfolio.TotalPortfolioValue
+        self.ClosingPortfolioValue = self.Portfolio.TotalPortfolioValue
+        self.WeightOffset = float(0)
 
         # Lists
         self.TimeBounds = [time(9, 30), time(9, 31)]
 
         # VIX Data
         self.AddData(CBOE, "VIX")
+        self.vix = self.AddIndex("VIX").Symbol
 
         # Selected Securitites
         self.Assets = [
@@ -86,17 +98,23 @@ class AdvancedIndexing(QCAlgorithm):
         self.VixReset = False
         self.OnStartUp = True
 
-        ManualSymbols = []
+        self.ManualSymbols = []
+
+        DefaultValues.ResetGlobal()
+        DefaultValues.ResetVixHandler()
+        self.FillVixList()
 
         for x in self.Assets:
-            ManualSymbols.append(x.Symbol)
+            self.ManualSymbols.append(x.Symbol)
             Global.OpenClose[x.Symbol] = [0, -np.inf, 0]
+            Global.TradeTriggers[x.Symbol] = True
 
         ##-------------------Construct Alpha Model----------------------------------------------------##
 
         # Universe Selection
-        self.AddUniverseSelection(ManualUniverseSelectionModel(ManualSymbols))
+        self.AddUniverseSelection(ManualUniverseSelectionModel(self.ManualSymbols))
 
+        # Alpha
         self.AddAlpha(LevSpy.SPXL())
         self.AddAlpha(LevSpy.SPXS())
         self.AddAlpha(LevQ.TQQQ())
@@ -109,41 +127,79 @@ class AdvancedIndexing(QCAlgorithm):
 
         # Execution
         self.SetExecution(ImmediateExecutionModel())
+        # self.SetExecution(LimitOrderExecutionModel())
 
         # Risk Management
-        #    self.SetRiskManagement(ManageDrawdownRisk())
-        self.SetRiskManagement(TrailingStop(DynamicDrawdown=False, Deviations=1))
+        self.SetRiskManagement(ManageDrawdownRisk())
+        # self.SetRiskManagement(ProfitCapture())
+        # self.SetRiskManagement(TrailingStop(DynamicDrawdown = False, Deviations = 1, MinimumRiskTolerance = 0.20))
 
         # Brokerage Model
-        self.SetBrokerageModel(BrokerageName.InteractiveBrokersBrokerage)
+        # self.SetBrokerageModel(InteractiveBrokersBrokerageModelWithShortable())
+        self.SetBrokerageModel(InteractiveBrokersBrokerageModel())
         # self.SetBrokerageModel(AlphaStreamsBrokerageModel())
 
         ##------------------Schedule Events-----------------------------------------------------------##
 
-        self.Schedule.On(self.DateRules.EveryDay("TQQQ"), self.TimeRules.AfterMarketOpen("TQQQ", 1), self.AtOpen)
-        self.Schedule.On(self.DateRules.EveryDay("TQQQ"), self.TimeRules.BeforeMarketClose("TQQQ", 1), self.AtClose)
+        self.Schedule.On(self.DateRules.EveryDay("TQQQ"), self.TimeRules.AfterMarketOpen("TQQQ", 0), self.MarketOpen)
+        self.Schedule.On(self.DateRules.EveryDay("TQQQ"), self.TimeRules.AfterMarketOpen("TQQQ", 1), self.GetOpenPrice)
         self.Schedule.On(self.DateRules.MonthStart("TQQQ"), self.TimeRules.AfterMarketOpen("TQQQ", 1), self.AverageVix)
+        self.Schedule.On(self.DateRules.EveryDay("TQQQ"), self.TimeRules.BeforeMarketClose("TQQQ", 1),
+                         self.GetClosePrice)
+        self.Schedule.On(self.DateRules.EveryDay("TQQQ"), self.TimeRules.BeforeMarketClose("TQQQ", 0), self.MarketClose)
 
         VIX = SymbolCache.GetSymbol("VIX.CBOE")
         self.AnnualRecalc(VIX)
 
+        # Set Warmup
+        self.SetWarmup(5, Resolution.Daily)
+
     ##-------------------On Data------------------------------------------------------------------##
 
     def OnData(self, data):
+        if self.Portfolio.TotalPortfolioValue > Global.PortfolioHigh:
+            Global.PortfolioHigh = self.Portfolio.TotalPortfolioValue
 
-        if not self.VixReset:
-            if self.Portfolio.TotalPortfolioValue > Global.PortfolioHigh:
-                Global.PortfolioHigh = self.Portfolio.TotalPortfolioValue
+            if round((Global.PortfolioHigh / self.InitialPortfolioValue) - 1, 3) > Global.PortfolioGains:
+                new_gains = round((Global.PortfolioHigh / self.InitialPortfolioValue) - 1, 3) - Global.PortfolioGains
+                Global.InitialDrawdown = min(0, round(Global.InitialDrawdown + new_gains, 3))
+                Global.PortfolioGains = round((Global.PortfolioHigh / self.InitialPortfolioValue) - 1, 3)
 
-            else:
-                Global.PortfolioDrawdown = round((self.Portfolio.TotalPortfolioValue / Global.PortfolioHigh) - 1, 3)
+        else:
+            Global.PortfolioDrawdown = round((self.Portfolio.TotalPortfolioValue / Global.PortfolioHigh) - 1,
+                                             3) + Global.InitialDrawdown
+
+        Global.MarginMultiplier = max(1.33, 1.33 * (1 + Global.PortfolioDrawdown))
 
         ##-------------------Manage and plot VIX data-------------------------------------------------##
 
         self.QCVix(data)
 
+    def MarketOpen(self):
+        Global.MarketIsOpen = True
+
+    def MarketClose(self):
+        Global.MarketIsOpen = False
+
     ##-------------------Manage symbol overnight gaps---------------------------------------------##
-    def AtOpen(self):
+    def GetOpenPrice(self):
+
+        self.WeightOffset = round((self.Portfolio.TotalPortfolioValue / self.ClosingPortfolioValue) - 1, 3)
+        Global.NoSharesAvailable = False
+
+        for key in Global.TradeTriggers:
+            if not Global.TradeTriggers[key]:
+                Global.TradeTriggers[key] = True
+
+        if self.LiveMode and self.WeightOffset < -0.9:
+            pass
+        else:
+            Global.ShortUVXY = min(Global.ShortUVXY - self.WeightOffset, 0.78)
+
+        self.Log(
+            f'Overnight change in portfolio value: {self.WeightOffset} | Adjusted Short Weight: {Global.ShortUVXY}')
+        self.Plot('Weights', 'Adjusted Short Weights', Global.ShortUVXY * 100)
+
         for key in Global.OpenClose:
 
             if np.isinf(Global.OpenClose[key][1]):
@@ -152,15 +208,15 @@ class AdvancedIndexing(QCAlgorithm):
                 Global.OpenClose[key][1] = history
                 Global.OpenClose[key][2] = round((Global.OpenClose[key][0] / Global.OpenClose[key][1]) - 1, 2)
 
-                # self.Log(f'{key} gap: {Global.OpenClose[key][2]*100}% at {self.Time.time()}')
-
             else:
                 Global.OpenClose[key][0] = self.Securities[key].Open
                 Global.OpenClose[key][2] = round((Global.OpenClose[key][0] / Global.OpenClose[key][1]) - 1, 2)
 
-                # self.Log(f'{key} gap: {Global.OpenClose[key][2]*100}% at {self.Time.time()}')
+    def GetClosePrice(self):
 
-    def AtClose(self):
+        self.Transactions.CancelOpenOrders()
+        self.ClosingPortfolioValue = self.Portfolio.TotalPortfolioValue
+
         for key in Global.OpenClose:
             if self.Securities[key].Close != Zero:
                 Global.OpenClose[key][1] = self.Securities[key].Close
@@ -188,34 +244,80 @@ class AdvancedIndexing(QCAlgorithm):
             VixHandler.SixDayVixAverage = np.mean(VixHandler.vixPercentMoveList)
 
             # Position weights
-            # weight = abs(round(-0.5/np.log((np.arctan(VixHandler.PreviousVixClose.Current.Value/37))),3))
-            weight = abs(
-                round(-0.5 / np.log((1.27 * np.arctan(np.sqrt(VixHandler.PreviousVixClose.Current.Value) / 10))), 3))
-            if weight >= 1.5:
-                Global.ShortUVXY = 1.5
-            elif weight <= 0.4:
-                Global.ShortUVXY = 0.4
-            else:
-                Global.ShortUVXY = weight
+            if VixHandler.PreviousVixClose.Current.Value >= VixHandler.DeviationVix[2]:
+                Global.ShortUVXY = min(abs(round(
+                    -0.5 / np.log((1.225 * np.arctan(np.sqrt(VixHandler.PreviousVixClose.Current.Value) / 10))), 3)),
+                                       0.78)
 
-            Global.MarginMultiplier = min(1.3, Global.ShortUVXY * np.pi)
+            else:
+                Global.ShortUVXY = min(abs(round(
+                    -0.44 / np.log((1.225 * np.arctan(np.sqrt(VixHandler.PreviousVixClose.Current.Value) / 10))), 3)),
+                                       0.78)
+
+                if Global.ShortUVXY <= 0.4:
+                    Global.ShortUVXY = 0.4
 
             # Charts
             self.Plot('VIX Spot', 'VixPercentMove', VixHandler.vixPercentMove)
             self.Plot('VIX Spot', 'Previous Day Closing VIX', VixHandler.PreviousVixClose.Current.Value)
             self.Plot('VIX 5-Day', '% Move Standard Deviation', VixHandler.FiveDayVixPercentMoveSTD)
             self.Plot('VIX 5-Day', '% Move Average', VixHandler.SixDayVixAverage)
-            self.Plot('Weights', 'Short Weights', Global.ShortUVXY * 100)
+            self.Plot('Weights', 'UnAdjusted Short Weights', Global.ShortUVXY * 100)
             # self.Plot('Studies', '% Move STD*AVG', VixHandler.FiveDayVixPercentMoveSTD*VixHandler.SixDayVixAverage)
-            self.Plot('Weights', 'Long Weights', Global.MarginMultiplier * 100)
+            # self.Plot('Weights', 'Long Weights', Global.MarginMultiplier*100)
 
             self.Log(
-                "At {0} the VIX list Populated. The current lists are: Spot - {1} | %Change - {2} | FiveDayVixPercentMoveSTD - {3} | SixDayVixAverage - {4} | Short Weight - {5} | Current Drawdown - {6}".format(
+                "At {0} the VIX list Populated. The current lists are: Spot - {1} | %Change - {2} | FiveDayVixPercentMoveSTD - {3} | SixDayVixAverage - {4} | Unadjusted Short Weight - {5} | Current Drawdown - {6}".format(
                     self.Time, VixHandler.vixList, VixHandler.vixPercentMoveList,
                     round(VixHandler.FiveDayVixPercentMoveSTD, 4), round(VixHandler.SixDayVixAverage, 4),
                     Global.ShortUVXY, Global.PortfolioDrawdown))
 
-        ##-----------------Annual recalculation of various statistics----------------------------------##
+        elif data.ContainsKey(self.vix):
+
+            current_vix = data[self.vix].Close
+
+            # Position weights
+            if current_vix >= VixHandler.DeviationVix[2]:
+                Global.ShortUVXY = min(abs(round(-0.5 / np.log((1.225 * np.arctan(np.sqrt(current_vix) / 10))), 3)),
+                                       0.78)
+
+            else:
+                Global.ShortUVXY = min(abs(round(-0.44 / np.log((1.225 * np.arctan(np.sqrt(current_vix) / 10))), 3)),
+                                       0.78)
+
+                if Global.ShortUVXY <= 0.4:
+                    Global.ShortUVXY = 0.4
+
+    def FillVixList(self):
+        VIX = SymbolCache.GetSymbol("VIX.CBOE")
+        days = 6
+        VixHandler.Symbol = VIX
+
+        VixHistory = self.VixHistory(days, VIX)
+        VixHandler.vixList = VixHistory.values.flatten().tolist()
+        VixHandler.vixPercentMoveList = VixHistory.pct_change().dropna().apply(
+            lambda x: x * float(100)).values.flatten().round(3).tolist()
+        VixHandler.PreviousVixClose.Update(self.Time, VixHandler.vixList[-1])
+        VixHandler.vixPercentMove = VixHandler.vixPercentMoveList[-1]
+        VixHandler.FiveDayVixPercentMoveSTD = np.std(VixHandler.vixPercentMoveList)
+        VixHandler.SixDayVixAverage = np.mean(VixHandler.vixPercentMoveList)
+
+        # Charts
+        self.Plot('VIX Spot', 'VixPercentMove', VixHandler.vixPercentMove)
+        self.Plot('VIX Spot', 'Previous Day Closing VIX', VixHandler.PreviousVixClose.Current.Value)
+        self.Plot('VIX 5-Day', '% Move Standard Deviation', VixHandler.FiveDayVixPercentMoveSTD)
+        self.Plot('VIX 5-Day', '% Move Average', VixHandler.SixDayVixAverage)
+        self.Plot('Weights', 'Short Weights', Global.ShortUVXY * 100)
+        # self.Plot('Studies', '% Move STD*AVG', VixHandler.FiveDayVixPercentMoveSTD*VixHandler.SixDayVixAverage)
+        # self.Plot('Weights', 'Long Weights', Global.MarginMultiplier*100)
+
+        self.Log(
+            "At {0} the VIX list Populated. The current lists are: Spot - {1} | %Change - {2} | FiveDayVixPercentMoveSTD - {3} | SixDayVixAverage - {4} | Short Weight - {5} | Current Drawdown - {6}".format(
+                self.Time, VixHandler.vixList, VixHandler.vixPercentMoveList,
+                round(VixHandler.FiveDayVixPercentMoveSTD, 4), round(VixHandler.SixDayVixAverage, 4), Global.ShortUVXY,
+                Global.PortfolioDrawdown))
+
+    ##-----------------Annual recalculation of various statistics----------------------------------##
 
     def AnnualRecalc(self, symbol):
 
@@ -264,13 +366,13 @@ class AdvancedIndexing(QCAlgorithm):
 
     ##-------------------Method to capture the desired amount of VIX history-------------------------##
 
-    def VixHistory(self, Days, symbol):
+    def VixHistory(self, Days, symbol, resolution=Resolution.Daily):
         startingDays = Days
-        history = self.History(symbol, Days, Resolution.Daily)
+        history = self.History(symbol, Days, resolution)
 
         while len(history) < Days:
             startingDays = startingDays + 1
-            history = self.History(symbol, startingDays, Resolution.Daily)
+            history = self.History(symbol, startingDays, resolution)
 
         return history["close"]
 
@@ -306,13 +408,13 @@ class AdvancedIndexing(QCAlgorithm):
 
         return requests
 
-    ##-----------------Handles broker specfic issues--------------------------------------------------##
+    # ##-----------------Handles broker specfic issues--------------------------------------------------##
 
     def OnBrokerageMessage(self, messageEvent):
         message = messageEvent.Message
 
         # Adjust maximum weights if brokerage is requiring more than the estimated initial margin
-        if (re.search("insufficient to cover the Initial Margin requirement", message, re.IGNORECASE)
-                or re.search("PREVIOUS DAY EQUITY WITH LOAN VALUE", message, re.IGNORECASE)
-                or re.search("INITIAL MARGIN", message, re.IGNORECASE)):
-            self.Log("Initial margin requirements require a reduction in position size. Reducing current order by 3%")
+        if (re.search("The contract is not available for short sale", message, re.IGNORECASE)
+                or re.search("Order held while securities are located", message, re.IGNORECASE)):
+            Global.NoSharesAvailable = True
+            self.Log(f'No shares of UVXY available to short. Generating similar insight')
