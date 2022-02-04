@@ -26,45 +26,47 @@ One = int(1)
 OneDay = timedelta(days=1)
 
 '''
-Section 1:  SPXL.  3x Leveraged SPY
+Section 1:  TQQQ.  3x Leveraged QQQ
 '''
 
-class SPXL(AlphaModel):
+class TQQQ(AlphaModel):
 
 ##-----------------Initialize variables, lists, etc---------------------------##
 
     def __init__(self):
 
         # SymbolData Parameters
-        self.FastPeriod = int(5)
-        self.SlowPeriod = int(20)
-        self.RSIDeviationRange = range(-3,4)
-        self.StatPeriod = timedelta(days=2000)
+        self.FastPeriod = int(1)
+        self.SlowPeriod = int(2)
+        self.RSIDeviationRange = range(-5,5)
+        self.StatPeriod = timedelta(days=2)
         self.resolution = Resolution.Daily
-        self.SPXL = {}
+        self.TQQQ = {}
         self.OpenOrders = []
 
         # Variables
         self.Lag = Zero
-        self.Name = "SPXL Alpha Model"
+        self.Name = "TQQQ Alpha Model"
 
         # Lists
-        self.TimeBounds = [time(9,30), time(15,55), time(9,31), time(9,32), time(15,59), time(16,00)]
+        self.TimeBounds = [time(9,31), time(15,55), time(9,31), time(9,32), time(15,59), time(16,00)]
 
         # Booleans
         self.Reset = True
         self.OnStartUp = True
 
     '''
-    Section 1-A:  SPXL insight generation
+    Section 1-A:  TQQQ insight generation
     '''
 
 ##-----------------Update-------------------------------------------------------##
 
     def Update(self, algorithm, data):
 
-        UVXY = SymbolCache.GetSymbol("UVXY")
+        SQQQ = SymbolCache.GetSymbol("SQQQ")
+
         insights = []
+
 
 ##-----------------Update various statistics annually----------------------------##
 
@@ -74,50 +76,17 @@ class SPXL(AlphaModel):
 
 ##-----------------Generate insights---------------------------------------------------##
 
-        for symbol, symbolData in self.SPXL.items():
+        for symbol, symbolData in self.TQQQ.items():
 
             # Check that preliminary criteria are met
             if self.ReadyCheck(algorithm, symbol, symbolData):
-
-                # If the EMA cross value is between -1 and -1.5 STD from the mean
-                if symbolData.Mean - 1.5*symbolData.STD < symbolData.EMACross.Current.Value < symbolData.Mean - symbolData.STD:
-                    insights.append(Insight.Price(symbol, Expiry.EndOfDay, InsightDirection.Up, float(0.0075), None, None, 1.0))
-                    Global.TradeTriggers[symbol] = False
-                    algorithm.Log("[SPXL]: EMA cross value is between -1 and -1.5 STD from the mean")
-
-                # If the previous day VIX close is less than or equal to 3 standard deviations below its 1-year mean and SPXL RSI is showing upward momentum but not overbought conditions and we are not currently invested in SPXL
-                elif VixHandler.PreviousVixClose.Current.Value <= VixHandler.DeviationVix[0] and symbolData.RSIDeviations[3] < symbolData.RSI.Current.Value < symbolData.RSIDeviations[5] and not algorithm.Portfolio[symbol].Invested:
-                    insights.append(Insight.Price(symbol, timedelta(days=2), InsightDirection.Up, float(0.0075), None, None, 1.0))
-                    Global.TradeTriggers[symbol] = False
-                    algorithm.Log("[SPXL]: The previous day VIX close is less than or equal to 3 standard deviations below its 1-year mean and SPXL RSI is showing upward momentum but not overbought conditions and we are not currently invested in SPXL")
-
-                # If the overnight gap is between 1 and 2 STD from the mean
-                elif symbolData.GapSignal[2] >= Global.OpenClose[symbol][2] >= symbolData.GapSignal[1]:
-                    insights.append(Insight.Price(symbol, timedelta(hours=1), InsightDirection.Up, float(0.001), None, None, 1.0))
-                    Global.TradeTriggers[symbol] = False
-                    algorithm.Log("[SPXL]: Overnight gap is between 1 and 2 STD from the mean")
-
-                # If the percent change of the VIX over the last 5 trading days has been relatively volatile, but the spot VIX is under 1.5 STD from the mean
-                elif ( int(4) < VixHandler.FiveDayVixPercentMoveSTD < int(5) ) and VixHandler.PreviousVixClose.Current.Value < VixHandler.DeviationVix[2]:
-                    insights.append(Insight.Price(symbol, Expiry.EndOfDay, InsightDirection.Up, float(0.0075), None, None, 1.0))
-                    Global.TradeTriggers[symbol] = False
-                    algorithm.Log("[SPXL]: The percent change of the VIX over the last 5 trading days has been relatively volatile, but the spot VIX is under 1.5 STD from the mean")
-
-                # If the 5-day average of VIX closes is between -10% and -7%
-                elif -int(10) <= VixHandler.SixDayVixAverage < -int(7) and Global.TradeTriggers[symbol]:
-                    insights.append(Insight.Price(symbol, Expiry.EndOfDay, InsightDirection.Up, float(0.0075), None, None, 1.0))
-                    Global.TradeTriggers[symbol] = False
-                    algorithm.Log("[SPXL]: The 5-day average of VIX closes is between -10% and -7%")
-
-                elif Global.NoSharesAvailable and not algorithm.Portfolio[symbol].Invested:
-                    insights.append(Insight.Price(symbol, Expiry.EndOfDay, InsightDirection.Up, float(0.0075), None, None, 1.0))
-                    Global.TradeTriggers[symbol] = False
-                    algorithm.Log("[SPXL]: There are no shares of UVXY available to short")
+                'Insights are intellectual property'
+                pass
 
 
 ##-----------------Extend insights separate from Risk Management Module------------------##
 
-        #insights.extend(self.ManagePosition(algorithm))
+        insights.extend(self.ManagePosition(algorithm))
 
         return insights
 
@@ -126,19 +95,15 @@ class SPXL(AlphaModel):
 
     def ManagePosition(self, algorithm):
 
+        SQQQ = SymbolCache.GetSymbol("SQQQ")
         SPXS = SymbolCache.GetSymbol("SPXS")
-        UVXY = SymbolCache.GetSymbol("UVXY")
 
         RiskInsights = []
-        RemainingTradingDay = Expiry.EndOfDay
 
-        if Global.MarketIsOpen:
-            for symbol, symbolData in self.SPXL.items():
-
-                # Insert comment here
-                if algorithm.Portfolio[symbol].UnrealizedProfitPercent <= -float(0.05):
-                    RiskInsights.append(Insight.Price(symbol, RemainingTradingDay, InsightDirection.Flat, float(0.01), None, None, 0.5))
-                    Global.TradeTriggers[symbol] = False
+        for symbol, symbolData in self.TQQQ.items():
+            if Global.MarketIsOpen and not algorithm.Portfolio[SPXS].Invested:
+                if algorithm.Portfolio[symbol].UnrealizedProfitPercent <= -float(0.075):
+                    RiskInsights.append(Insight.Price(SPXS, timedelta(hours=17.5), InsightDirection.Up, float(0.01), None, None, 0.5))
 
         return RiskInsights
 
@@ -166,20 +131,20 @@ class SPXL(AlphaModel):
 
     def OnSecuritiesChanged(self, algorithm, changes):
 
-        SPXL = SymbolCache.GetSymbol("SPXL")
+        TQQQ = SymbolCache.GetSymbol("TQQQ")
 
         for added in changes.AddedSecurities:
-            # Only create symbol data for SPXL
-            symbolData = self.SPXL.get(added.Symbol)
+            # Only create symbol data for SPXS
+            symbolData = self.TQQQ.get(added.Symbol)
 
-            if symbolData is None and added.Symbol == SPXL:
+            if symbolData is None and added.Symbol == TQQQ:
                 # Create indicators
                 symbolData = SymbolData(added, self.Name, self.RSIDeviationRange)
                 symbolData.InitializeIndicators(algorithm, self.FastPeriod, self.SlowPeriod, self.resolution)
                 symbolData.StatBounds(algorithm, self.FastPeriod, self.SlowPeriod, self.StatPeriod, self.resolution)
                 symbolData.GetGapSignal(algorithm)
 
-                self.SPXL[added.Symbol] = symbolData
+                self.TQQQ[added.Symbol] = symbolData
 
             else:
                 continue
@@ -200,7 +165,7 @@ class SPXL(AlphaModel):
         if (self.Reset and algorithm.Time.date() == MiscMethods.GetNextWeekday(date(algorithm.Time.year, 1, 3)) + OneDay) or self.OnStartUp:
 
             if not self.OnStartUp:
-                for symbol, symbolData in self.SPXL.items():
+                for symbol, symbolData in self.TQQQ.items():
                     symbolData.StatBounds(algorithm, self.FastPeriod, self.SlowPeriod, self.StatPeriod, self.resolution)
                     symbolData.GetGapSignal(algorithm)
 
@@ -208,30 +173,28 @@ class SPXL(AlphaModel):
             self.OnStartUp = False
 
 
-
-
 '''
-Section 2:  SPXS.  -3x leveraged SPY
+Section 2:  SQQQ.  -3x Leveraged QQQ
 '''
 
-class SPXS(AlphaModel):
+class SQQQ(AlphaModel):
 
 ##-----------------Initialize variables, lists, etc---------------------------##
 
     def __init__(self):
 
         # SymbolData Parameters
-        self.FastPeriod = int(5)
-        self.SlowPeriod = int(20)
-        self.RSIDeviationRange = range(-2,4)
-        self.StatPeriod = timedelta(days=2000)
+        self.FastPeriod = int(1)
+        self.SlowPeriod = int(22)
+        self.RSIDeviationRange = range(-6,46)
+        self.StatPeriod = timedelta(days=2)
         self.resolution = Resolution.Daily
-        self.SPXS = {}
+        self.SQQQ = {}
         self.OpenOrders = []
 
         # Variables
         self.Lag = Zero
-        self.Name = "SPXS Alpha Model"
+        self.Name = "SQQQ Alpha Model"
 
         # Lists
         self.TimeBounds = [time(9,31), time(15,55), time(9,31), time(9,32), time(15,59), time(16,00)]
@@ -241,14 +204,14 @@ class SPXS(AlphaModel):
         self.OnStartUp = True
 
     '''
-    Section 2-A:  SPXS insight generation
+    Section 2-A:  SQQQ insight generation
     '''
+
 ##-----------------Update-------------------------------------------------------##
 
     def Update(self, algorithm, data):
 
-        SPXL = SymbolCache.GetSymbol("SPXL")
-        UVXY = SymbolCache.GetSymbol("UVXY")
+        TQQQ = SymbolCache.GetSymbol("TQQQ")
         insights = []
 
 
@@ -260,52 +223,14 @@ class SPXS(AlphaModel):
 
 ##-----------------Generate insights---------------------------------------------------##
 
-
-        for symbol, symbolData in self.SPXS.items():
-
-            # Check that preliminary criteria are met
-            if self.ReadyCheck(algorithm, symbol, symbolData):
-
-                # If SPXS gapped up a reasonable amount, buy the inverse SPXL as a contrarian play - essentially buying the dip
-                if symbolData.GapSignal[2] > Global.OpenClose[symbol][2] > symbolData.GapSignal[1]:
-                    insights.append(Insight.Price(SPXL, Expiry.EndOfDay, InsightDirection.Up, float(0.01), None, None, 1.0))
-                    Global.TradeTriggers[symbol] = False
-                    algorithm.Log("[SPXS]: Gapped up a reasonable amount, buy the inverse SPXL as a contrarian play - essentially buying the dip")
-
-                # If SPXS is extremely oversold
-                elif (symbolData.Mean - 3*symbolData.STD) < symbolData.EMACross.Current.Value < (symbolData.Mean - 2*symbolData.STD):
-                    insights.append(Insight.Price(symbol, timedelta(hours=3), InsightDirection.Up, float(0.01), None, None, 1.0))
-                    Global.TradeTriggers[symbol] = False
-                    algorithm.Log("[SPXS]: EMA cross is between -2 and -3 standard deviations from the mean")
-
-                # If the standard deviation of the 5-day VIX percent change is extremely low and SPXS price momentum is to the upside
-                elif VixHandler.FiveDayVixPercentMoveSTD < int(2) and symbolData.EMACross.Current.Value > (symbolData.Mean - 0*symbolData.STD):
-                    insights.append(Insight.Price(symbol, timedelta(days=3), InsightDirection.Up, float(0.01), None, None, 1.0))
-                    Global.TradeTriggers[symbol] = False
-                    algorithm.Log("[SPXS]: The standard deviation of the 5-day VIX percent change is extremely low and SPXS price momentum is to the upside")
-
-                # If SPXS gapped up immensely
-                elif  symbolData.GapSignal[4] > Global.OpenClose[symbol][2] > symbolData.GapSignal[3]:
-                    insights.append(Insight.Price(symbol, timedelta(days=2), InsightDirection.Up, float(0.01), None, None, 1.0))
-                    Global.TradeTriggers[symbol] = False
-                    algorithm.Log("[SPXS]: Gapped up immensely")
-
-                # If RSI is elevated and the previous 2 RSI points are rising, SPXS is trending upward, the standard deviation of the 5-day VIX percent change is normal, and there is not currently an open SPXL position
-                elif (symbolData.RSIDeviations[4] > symbolData.RSI.Current.Value > symbolData.RSIDeviations[3]
-                        and symbolData.RSIWindow[0] < symbolData.RSIWindow[1]
-                        and symbolData.EMACross.Current.Value > (symbolData.Mean + 0.5*symbolData.STD)
-                        and  int(3) < VixHandler.FiveDayVixPercentMoveSTD < int(8)
-                        and not algorithm.Portfolio[SPXL].Invested):
-
-                    insights.append(Insight.Price(SPXL, timedelta(days=4), InsightDirection.Up, float(0.01), None, None, 1.0))
-                    Global.TradeTriggers[symbol] = False
-                    algorithm.Log("[SPXS]: RSI is elevated and the previous 2 RSI points are rising, SPXS is trending upward, the standard deviation of the 5-day VIX percent change is normal, and there is not currently an open SPXL position [ Current SPXS RSI: {0} ]".format(symbolData.RSI.Current.Value))
-
+        for symbol, symbolData in self.SQQQ.items():
+            'Insights are intellectual property'
+            pass
 
 
 ##-----------------Extend insights separate from Risk Management Module------------------##
 
-        #insights.extend(self.ManagePosition(algorithm))
+        insights.extend(self.ManagePosition(algorithm))
 
         return insights
 
@@ -314,24 +239,27 @@ class SPXS(AlphaModel):
 
     def ManagePosition(self, algorithm):
 
-        SPXL = SymbolCache.GetSymbol("SPXS")
+        TQQQ = SymbolCache.GetSymbol("TQQQ")
         UVXY = SymbolCache.GetSymbol("UVXY")
 
         RiskInsights = []
-        RemainingTradingDay = Expiry.EndOfDay
 
-        if Global.MarketIsOpen:
-            for symbol, symbolData in self.SPXS.items():
+        for symbol, symbolData in self.SQQQ.items():
+            if (
+                Global.MarketIsOpen
+                and not algorithm.Portfolio[TQQQ].Invested
+                ):
 
-                # Insert comment here
-                if algorithm.Portfolio[symbol].UnrealizedProfitPercent <= -float(0.04) :
-                    RiskInsights.append(Insight.Price(UVXY, RemainingTradingDay, InsightDirection.Down, float(0.01), None, None, 0.5))
-                    Global.TradeTriggers[symbol] = False
+                if algorithm.Portfolio[symbol].UnrealizedProfitPercent <= -float(0.2025):
+                    RiskInsights.append(Insight.Price(TQQQ, timedelta(hours=2.5), InsightDirection.Up, float(0.01), None, None, 0.5))
+                    # RiskInsights.append(Insight.Price(UVXY, timedelta(hours=1.5), InsightDirection.Up, float(0.01), None, None, 0.5))
 
         return RiskInsights
 
 
+
 ##-----------------Checks that certain criteria are met before trading-------------------##
+
     def ReadyCheck(self, algorithm, symbol, symbolData):
         self.OpenOrders = algorithm.Transactions.GetOpenOrders(symbol)
 
@@ -339,7 +267,8 @@ class SPXS(AlphaModel):
         and Global.TradeTriggers[symbol]
         and VixHandler.vixList
         and Global.MarketIsOpen
-        and not self.OpenOrders):
+        and not self.OpenOrders
+        ):
 
             return True
 
@@ -349,28 +278,28 @@ class SPXS(AlphaModel):
     '''
     Section 2-B:  Universe changes
     '''
+
 ##-----------------Handle asset(s)-specific class on universe changes---------------------##
 
     def OnSecuritiesChanged(self, algorithm, changes):
 
-        SPXS = SymbolCache.GetSymbol("SPXS")
+        SQQQ = SymbolCache.GetSymbol("SQQQ")
 
         for added in changes.AddedSecurities:
             # Only create symbol data for SPXS
-            symbolData = self.SPXS.get(added.Symbol)
+            symbolData = self.SQQQ.get(added.Symbol)
 
-            if symbolData is None and added.Symbol == SPXS:
+            if symbolData is None and added.Symbol == SQQQ:
                 # Create indicators
                 symbolData = SymbolData(added, self.Name, self.RSIDeviationRange)
                 symbolData.InitializeIndicators(algorithm, self.FastPeriod, self.SlowPeriod, self.resolution)
                 symbolData.StatBounds(algorithm, self.FastPeriod, self.SlowPeriod, self.StatPeriod, self.resolution)
                 symbolData.GetGapSignal(algorithm)
 
-                self.SPXS[added.Symbol] = symbolData
+                self.SQQQ[added.Symbol] = symbolData
 
             else:
                 continue
-
 
     '''
     Section 2-C:  Recalculates indicator and price statistics annually
@@ -387,12 +316,13 @@ class SPXS(AlphaModel):
         if (self.Reset and algorithm.Time.date() == MiscMethods.GetNextWeekday(date(algorithm.Time.year, 1, 3)) + OneDay) or self.OnStartUp:
 
             if not self.OnStartUp:
-                for symbol, symbolData in self.SPXS.items():
+                for symbol, symbolData in self.SQQQ.items():
                     symbolData.StatBounds(algorithm, self.FastPeriod, self.SlowPeriod, self.StatPeriod, self.resolution)
                     symbolData.GetGapSignal(algorithm)
 
             self.Reset = False
             self.OnStartUp = False
+
 
 
 
@@ -490,7 +420,7 @@ class SymbolData:
 ##-----------------Captures Gap stats for the symbol-------------------------------------------##
 
     def GetGapSignal(self, algorithm):
-        history = algorithm.History(self.Symbol, timedelta(days=4000), Resolution.Daily)
+        history = algorithm.History(self.Symbol, timedelta(days=43000), Resolution.Daily)
 
         GapArray = [Zero]
         for i in range(1, len(history)):
@@ -534,7 +464,7 @@ class SymbolData:
 
     def RSIBounds(self, algorithm, history):
 
-        rsi = algorithm.RSI(self.Symbol, 14, MovingAverageType.Simple, Resolution.Daily)
+        rsi = algorithm.RSI(self.Symbol, 124, MovingAverageType.Simple, Resolution.Daily)
         RSIValues = []
 
         for time, row in history.loc[self.Symbol].iterrows():
@@ -581,7 +511,7 @@ Section 4:  Misc methods
 class MiscMethods:
 
     def __init__(self):
-        self.OpenMarket = False
+        pass
 
 
     '''
@@ -603,16 +533,11 @@ class MiscMethods:
     Section 4-B:  Takes in the current time and returns the current open, current close, next open, and optionally the current open plus a timedelta offset
     '''
 ##-----------------Return current open, current close, and next open from specified time------##
-    def MarketHours(self, algorithm, symbol, offset=timedelta(minutes=0)):
+    def MarketHours(algorithm, symbol, offset=timedelta(minutes=0)):
         hours = algorithm.Securities[symbol].Exchange.Hours
         CurrentOpen = hours.GetNextMarketOpen(algorithm.Time, False)
         CurrentClose = hours.GetNextMarketClose(CurrentOpen, False)
         NextOpen = hours.GetNextMarketOpen(CurrentClose, False)
         OpenOffset = hours.GetNextMarketOpen(algorithm.Time, False) + offset
-
-        if CurrentOpen <= algorithm.Time < CurrentClose:
-            self.OpenMarket = True
-        else:
-            self.OpenMarket = False
 
         return [CurrentOpen, CurrentClose, NextOpen, OpenOffset]
