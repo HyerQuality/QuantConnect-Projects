@@ -22,6 +22,7 @@ from Global import Global
 
 Zero = int(0)
 UTCMIN = datetime.min.replace(tzinfo=utc)
+UTCMAX = datetime.max.replace(tzinfo=utc)
 SpecialResolutions = {
     "Long UVXY Alpha Model": Resolution.Hour,
     "Debug Alpha Model": Resolution.Daily}
@@ -37,8 +38,10 @@ class SourceModelPortfolioConstructionModel(PortfolioConstructionModel):
         self.CummulativeInsightCollection = InsightCollection()
         self.FlatInsightCollection = InsightCollection()
         self.ShortWeight = Global.ShortUVXY
+        self.NextExpiryTime = UTCMIN
         self.RemovedSymbols = []
         self.DictCleanUp = []
+        self.SourceModelExpirations = {}
         self.ErrorSymbols = {}
         self.Percents = {}
         self.SourceModels = {}
@@ -70,7 +73,10 @@ class SourceModelPortfolioConstructionModel(PortfolioConstructionModel):
                 self.Percents[insight] = insight.Direction * Global.ShortUVXY / count
 
             elif insight.Direction == InsightDirection.Up:
-                self.Percents[insight] = insight.Direction * percent
+                if insight.Symbol != 'UVXY':
+                    self.Percents[insight] = insight.Direction * percent
+                else:
+                    self.Percents[insight] = insight.Direction * percent * 1.28
 
             else:
                 self.Percents[insight] = Zero
@@ -83,7 +89,7 @@ class SourceModelPortfolioConstructionModel(PortfolioConstructionModel):
         targets = []
 
         # Only generate targets during market hours
-        if not (time(9, 30) <= algorithm.Time.time() < time(16, 00)): return targets
+        if not Global.MarketIsOpen: return targets
 
         # Separate alpha models to handling insights from each model uniquely, if desired
         for insight in insights:
@@ -103,8 +109,19 @@ class SourceModelPortfolioConstructionModel(PortfolioConstructionModel):
 
         # Create a target for each alpha model
         for SourceModel, AlphaInsights in self.SourceModels.items():
+            AlphaInsights.NextExpiryTime = self.NextExpiryTime
             results = AlphaInsights.CreatePositions(algorithm, insights, self.Percents, self.RemovedSymbols)
             targets.extend(results)
+
+            if AlphaInsights.NextExpiryTime > UTCMIN:
+                self.SourceModelExpirations[SourceModel] = AlphaInsights.NextExpiryTime
+            else:
+                self.SourceModelExpirations[SourceModel] = UTCMAX
+
+        # Update global expiration target time to the minimum expiring insight across all source models. Ensures maximum portfolio utilization
+        if algorithm.Portfolio.Invested:
+            self.NextExpiryTime = self.SourceModelExpirations[
+                min(self.SourceModelExpirations, key=self.SourceModelExpirations.get)]
 
         # Create flatten target for each security that was removed from the universe
         if self.RemovedSymbols is not None:
@@ -150,7 +167,17 @@ class DynamicTargets:
 
         Targets = []
 
-        # Simultaneously the current time must be less than the next expiration time and next rebalancing time as well as no new insights and no changes to the universe.  If so, do nothing.
+        # Get expired insights and create flatten targets for each symbol
+        ExpiredTargets = []
+        ExpiredInsights = self.insightCollection.RemoveExpiredInsights(algorithm.UtcTime)
+
+        for symbol, f in groupby(ExpiredInsights, lambda x: x.Symbol):
+            if not self.insightCollection.HasActiveInsights(symbol, algorithm.UtcTime):
+                ExpiredTargets.append(PortfolioTarget(symbol, Zero))
+
+        Targets.extend(ExpiredTargets)
+
+        # Simultaneously, the current time must be less than the next expiration time and next rebalancing time as well as no new insights and no changes to the universe.  If so, do nothing.
         if (algorithm.UtcTime <= self.NextExpiryTime and algorithm.UtcTime <= self.RebalancingTime and len(
                 insights) == Zero and RemovedSymbols is None):
             return Targets
@@ -160,17 +187,6 @@ class DynamicTargets:
             for insight in insights:
                 if insight.SourceModel == self.SourceModel:
                     self.insightCollection.Add(insight)
-
-            # Get expired insights and create flatten targets for each symbol
-            ExpiredTargets = []
-            ExpiredInsights = self.insightCollection.RemoveExpiredInsights(algorithm.UtcTime)
-
-            for symbol, f in groupby(ExpiredInsights, lambda x: x.Symbol):
-                if not self.insightCollection.HasActiveInsights(symbol,
-                                                                algorithm.UtcTime) and not symbol in self.ErrorSymbols:
-                    ExpiredTargets.append(PortfolioTarget(symbol, Zero))
-
-            Targets.extend(ExpiredTargets)
 
             # Get insights that haven't expired for each symbol that is still in the universe
             ActiveInsights = self.insightCollection.GetActiveInsights(algorithm.UtcTime)
@@ -189,14 +205,18 @@ class DynamicTargets:
 
                     if not target is None:
                         Targets.append(target)
+                        if algorithm.LiveMode:
+                            algorithm.Log(f'Target created for {symbol} at {algorithm.Time.time()}')
 
                     else:
                         self.ErrorSymbols[symbol] = symbol
-                        # algorithm.Log(f'{self.Symbol} had an error when generating a target for {insight}.')
+                        self.insightCollection.Remove(insight)
+                        algorithm.Log(
+                            f'{symbol} had an error when generating a target for {insight}. Insight removed from collection')
 
                 else:
                     self.ErrorSymbols[symbol] = symbol
-                    # algorithm.Log(f'{insight} not in Active Insights.')
+                    self.insightCollection.Remove(insight)
 
             # Capture the next expiration time and rebalancing time then return source model targets
             self.NextExpiryTime = self.insightCollection.GetNextExpiryTime()
